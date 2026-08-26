@@ -37,6 +37,7 @@ from app.models.evidence_file import EvidenceFile, EvidenceKind
 from app.models.message import Message
 from app.models.timeline_event import TimelineEvent, TimelineEventType
 from app.services import audit_log
+from app.services.file_signature import detect_file_signature
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi"}
@@ -254,7 +255,7 @@ class CaseFolderParser(UFDRParser):
                 captured_at = lat = lon = None
                 if kind == EvidenceKind.photo:
                     captured_at, lat, lon = _read_exif(file_path)
-
+                 signature = detect_file_signature(file_path)
                 evidence = EvidenceFile(
                     case_id=case.id,
                     kind=kind,
@@ -269,6 +270,21 @@ class CaseFolderParser(UFDRParser):
                 )
                 session.add(evidence)
                 session.flush()
+                if signature and not signature.is_match:
+                            session.add(
+                             TimelineEvent(
+                             case_id=case.id,
+                              event_type=TimelineEventType.anomaly,
+                             timestamp=captured_at or evidence.created_at,
+                             summary=(
+                              f"File type mismatch: {file_path.name} "
+                              f"has extension '{signature.extension}' "
+                              f"but appears to contain '{signature.detected_type}' data"
+                                 ),
+                              source_table="evidencefile",
+                             source_id=evidence.id,
+                )
+            )
 
                 event_type = TimelineEventType.photo if kind == EvidenceKind.photo else TimelineEventType.audio
                 session.add(
