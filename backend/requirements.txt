@@ -21,12 +21,12 @@ pyttsx3==2.90
 sentence-transformers==3.1.1
 faiss-cpu==1.8.0.post1
 facenet-pytorch==2.6.0
-torch==2.4.1
+torch==2.2.2
 scikit-learn==1.5.2
 opencv-python==4.10.0.84
 opennsfw2==0.13.0
 numpy==1.26.4
-Pillow==10.4.0
+Pillow==10.2.0
 
 # --- Dev/test ---
 pytest==8.3.3
