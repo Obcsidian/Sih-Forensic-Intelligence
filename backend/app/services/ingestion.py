@@ -255,37 +255,39 @@ class CaseFolderParser(UFDRParser):
                 captured_at = lat = lon = None
                 if kind == EvidenceKind.photo:
                     captured_at, lat, lon = _read_exif(file_path)
-                 signature = detect_file_signature(file_path)
+
+                signature = detect_file_signature(file_path)
+
                 evidence = EvidenceFile(
-                    case_id=case.id,
-                    kind=kind,
-                    original_path=str(file_path),
-                    file_name=file_path.name,
-                    sha256=sha256_of_file(file_path),
-                    size_bytes=file_path.stat().st_size,
-                    captured_at=captured_at,
-                    latitude=lat,
-                    longitude=lon,
-                    deleted_then_recovered=file_path.name in recovered_files,
+                        case_id=case.id,
+                        kind=kind,
+                        original_path=str(file_path),
+                        file_name=file_path.name,
+                        sha256=sha256_of_file(file_path),
+                        size_bytes=file_path.stat().st_size,
+                        captured_at=captured_at,
+                        latitude=lat,
+                        longitude=lon,
+                        deleted_then_recovered=file_path.name in recovered_files,
                 )
                 session.add(evidence)
                 session.flush()
-                if signature and not signature.is_match:
-                            session.add(
-                             TimelineEvent(
-                             case_id=case.id,
-                              event_type=TimelineEventType.anomaly,
-                             timestamp=captured_at or evidence.created_at,
-                             summary=(
-                              f"File type mismatch: {file_path.name} "
-                              f"has extension '{signature.extension}' "
-                              f"but appears to contain '{signature.detected_type}' data"
-                                 ),
-                              source_table="evidencefile",
-                             source_id=evidence.id,
-                )
-            )
 
+                if signature and not signature.is_match:
+                    session.add(
+                        TimelineEvent(
+                            case_id=case.id,
+                            event_type=TimelineEventType.anomaly,
+                            timestamp=captured_at or evidence.created_at,
+                            summary=(
+                                f"File type mismatch: {file_path.name} "
+                                f"has extension '{signature.extension}' "
+                                f"but appears to contain '{signature.detected_type}' data"
+                            ),
+                            source_table="evidencefile",
+                            source_id=evidence.id,
+                        )
+                    )
                 event_type = TimelineEventType.photo if kind == EvidenceKind.photo else TimelineEventType.audio
                 session.add(
                     TimelineEvent(
