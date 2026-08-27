@@ -1,0 +1,24 @@
+[
+  {
+    "type": "app_install",
+    "timestamp": "2026-03-10T13:00:00",
+    "detail": "SecureVault (hidden storage app)"
+  },
+  {
+    "type": "app_uninstall",
+    "timestamp": "2026-03-10T14:10:00",
+    "detail": "SecureVault (hidden storage app)"
+  },
+  {
+    "type": "file_deleted",
+    "timestamp": "2026-03-10T13:30:00",
+    "detail": "IMG_4471.jpg deleted from DCIM",
+    "file_name": "IMG_4471.jpg"
+  },
+  {
+    "type": "file_recovered",
+    "timestamp": "2026-03-10T15:00:00",
+    "detail": "IMG_4471.jpg recovered from unallocated space",
+    "file_name": "IMG_4471.jpg"
+  }
+]

@@ -1,0 +1,4 @@
+sender,recipient,body,timestamp,app
+device_owner,+91-98100-11111,Are we still meeting about the transfer tonight?,2026-03-10T09:05:00,sms
++91-98100-11111,device_owner,"Yes, usual place. Bring the money.",2026-03-10T09:08:00,whatsapp
+device_owner,+91-98100-33333,Can you send the documents we discussed?,2026-03-10T12:00:00,whatsapp
