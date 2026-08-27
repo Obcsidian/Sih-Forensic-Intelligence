@@ -44,7 +44,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const headers = new Headers(init?.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (init?.body && !(init.body instanceof URLSearchParams) && !headers.has("Content-Type")) {
+  if (
+    init?.body &&
+    !(init.body instanceof URLSearchParams) &&
+    !(init.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -98,6 +103,13 @@ export const api = {
   getCase: (id: number) => request<Case>(`/cases/${id}`),
   createCase: (data: { name: string; description?: string; source_path: string }) =>
     request<Case>("/cases", { method: "POST", body: JSON.stringify(data) }),
+  uploadCase: (data: { name: string; description?: string; files: File[] }) => {
+    const form = new FormData();
+    form.set("name", data.name);
+    if (data.description) form.set("description", data.description);
+    for (const f of data.files) form.append("files", f);
+    return request<Case>("/cases/upload", { method: "POST", body: form });
+  },
   ingestCase: (id: number) => request<IngestSummary>(`/cases/${id}/ingest`, { method: "POST" }),
 
   listEvidence: (caseId: number, nsfwFlagged?: boolean) =>
