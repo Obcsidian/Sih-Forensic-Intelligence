@@ -3,8 +3,8 @@
 import { useMemo, useState } from "react";
 import { useAuthedBlobUrl } from "@/lib/useAuthedBlobUrl";
 import { api } from "@/lib/api";
-import type { Call, Contact, EvidenceFile, Message, Person, SearchHit, TimelineEvent, Transcript } from "@/lib/types";
-import type { CommTab, EvidenceFilter, TriageTab, ViewMode } from "./Workspace";
+import type { Call, Contact, EvidenceFile, Message, Person, RegistryArtifact, SearchHit, TimelineEvent, Transcript } from "@/lib/types";
+import type { ArtifactTab, CommTab, EvidenceFilter, TriageTab, ViewMode } from "./Workspace";
 
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -32,6 +32,14 @@ const EVENT_ICON: Record<string, string> = {
   anomaly: "⚠",
 };
 
+const FILE_KIND_ICON: Record<string, string> = {
+  photo: "🖼",
+  video: "🎬",
+  audio: "🎧",
+  document: "📄",
+  other: "📄",
+};
+
 export default function CenterPanel(props: {
   caseId: number;
   view: ViewMode;
@@ -42,6 +50,9 @@ export default function CenterPanel(props: {
   setTriageTab: (t: TriageTab) => void;
   commTab: CommTab;
   setCommTab: (t: CommTab) => void;
+  artifactTab: ArtifactTab;
+  setArtifactTab: (t: ArtifactTab) => void;
+  artifacts: RegistryArtifact[];
   contacts: Contact[];
   calls: Call[];
   messages: Message[];
@@ -67,6 +78,9 @@ export default function CenterPanel(props: {
     setTriageTab,
     commTab,
     setCommTab,
+    artifactTab,
+    setArtifactTab,
+    artifacts,
     contacts,
     calls,
     messages,
@@ -138,7 +152,7 @@ export default function CenterPanel(props: {
 
   if (view === "communications") {
     return (
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex gap-1 border-b border-border px-2 py-1.5">
           {(["messages", "calls", "contacts"] as CommTab[]).map((t) => (
             <button
@@ -185,9 +199,57 @@ export default function CenterPanel(props: {
     );
   }
 
+  if (view === "artifacts") {
+    const filteredArtifacts = artifacts.filter((a) => a.kind === artifactTab);
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5">
+          {(
+            [
+              ["installed_program", "Installed Programs"],
+              ["autorun_entry", "Run Programs"],
+              ["recent_document", "Recent Documents"],
+              ["os_info", "Operating System Information"],
+              ["network_connection", "Wireless Networks"],
+            ] as [ArtifactTab, string][]
+          ).map(([t, label]) => (
+            <button
+              key={t}
+              onClick={() => setArtifactTab(t)}
+              className={`rounded px-3 py-1 text-xs ${artifactTab === t ? "bg-accent/20 text-accent" : "text-gray-400 hover:bg-panel3"}`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="ml-auto self-center text-xs text-gray-500">{filteredArtifacts.length} results</span>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {filteredArtifacts.map((a) => (
+            <div
+              key={a.id}
+              onClick={() => {
+                const src = evidence.find((e) => e.id === a.evidence_file_id);
+                if (src) setSelectedEvidence(src);
+              }}
+              className="flex cursor-pointer gap-3 border-b border-border/40 px-3 py-2 text-xs hover:bg-panel2"
+            >
+              <span className="w-36 shrink-0 text-gray-500">{fmtTime(a.timestamp)}</span>
+              <span className="w-24 shrink-0 truncate text-gray-500">{a.owner || a.hive}</span>
+              <span className="flex-1 truncate text-gray-200">{a.name}</span>
+              <span className="max-w-[240px] shrink-0 truncate text-gray-500">{a.value}</span>
+            </div>
+          ))}
+          {filteredArtifacts.length === 0 && (
+            <div className="py-8 text-center text-xs text-gray-600">No artifacts of this kind found for this case.</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (view === "triage") {
     return (
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
           {(["faces", "anomalies", "nsfw"] as TriageTab[]).map((t) => (
             <button
@@ -270,7 +332,7 @@ export default function CenterPanel(props: {
 
   // view === "evidence"
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
         {(["table", "thumbnail", "cluster"] as const).map((t) => (
           <button
@@ -307,7 +369,10 @@ export default function CenterPanel(props: {
                     selectedEvidence?.id === e.id ? "bg-[#103a44]" : ""
                   }`}
                 >
-                  <td className="px-3 py-1.5 text-gray-200">{e.file_name}</td>
+                  <td className="px-3 py-1.5 text-gray-200">
+                    <span className="mr-1.5 text-gray-500">{FILE_KIND_ICON[e.kind] || "📄"}</span>
+                    {e.file_name}
+                  </td>
                   <td className="px-3 py-1.5 font-mono text-gray-500">{shortHash(e.sha256)}</td>
                   <td className="px-3 py-1.5">
                     <AiBadges evidence={e} />

@@ -23,6 +23,7 @@ def init_db() -> None:
         face_detection,
         message,
         person,
+        registry_artifact,
         report,
         timeline_event,
         transcript,

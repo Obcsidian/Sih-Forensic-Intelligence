@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.database import engine, init_db
 from app.routers import (
     anomalies,
+    artifacts,
     audit,
     auth,
     cases,
@@ -57,6 +58,7 @@ app.include_router(anomalies.router)
 app.include_router(reports.router)
 app.include_router(tts.router)
 app.include_router(audit.router)
+app.include_router(artifacts.router)
 
 
 @app.get("/health")

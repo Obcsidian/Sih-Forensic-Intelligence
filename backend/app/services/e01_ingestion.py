@@ -17,6 +17,7 @@ standard format parseable with the stdlib `email` module, so those get
 turned into Message rows the same way UFDR SMS/chat records do.
 """
 
+import json
 import logging
 import threading
 from dataclasses import dataclass
@@ -29,8 +30,9 @@ from app.config import get_settings
 from app.models.case import Case
 from app.models.evidence_file import EvidenceFile, EvidenceKind
 from app.models.message import Message
+from app.models.registry_artifact import RegistryArtifact
 from app.models.timeline_event import TimelineEvent, TimelineEventType
-from app.services import audit_log
+from app.services import audit_log, registry_artifacts
 from app.services.email_parsing import format_message_body, parse_eml
 from app.services.ingestion import (
     AUDIO_EXTENSIONS,
@@ -229,6 +231,15 @@ def _classify(name: str) -> EvidenceKind | None:
     if suffix in DOCUMENT_EXTENSIONS or suffix in EMAIL_EXTENSIONS or name.lower() in KNOWN_ARTIFACT_FILENAMES:
         return EvidenceKind.document
     return EvidenceKind.other
+
+
+def _derive_owner(image_path: str) -> str | None:
+    """For a per-user hive (NTUSER.DAT), the username is the parent
+    directory of its in-image path, e.g. `/Documents and Settings/jean/NTUSER.DAT`
+    or `/Users/jean/NTUSER.DAT` -> "jean". Machine-wide hives (SOFTWARE/SYSTEM)
+    have no single owner, so callers only use this for NTUSER.DAT."""
+    parts = [p for p in image_path.split("/") if p]
+    return parts[-2] if len(parts) >= 2 else None
 
 
 def _walk_filesystem(fs, summary: IngestSummary):
@@ -457,6 +468,10 @@ class _TskImageParser(UFDRParser):
                 f"automatic parsing not implemented, extracted to {dest} for manual review"
             )
 
+        hive_name = registry_artifacts.identify_hive(name)
+        if hive_name is not None:
+            self._ingest_registry_hive(session, case, entry, dest, hive_name, evidence, summary, data_source_id)
+
         if Path(name).suffix.lower() in EMAIL_EXTENSIONS:
             self._ingest_email(session, case, entry.path, content, evidence, summary)
 
@@ -531,6 +546,54 @@ class _TskImageParser(UFDRParser):
             )
         )
         summary.messages += 1
+
+    def _ingest_registry_hive(
+        self,
+        session,
+        case,
+        entry: _Entry,
+        dest: Path,
+        hive_name: str,
+        evidence: EvidenceFile,
+        summary: IngestSummary,
+        data_source_id: int | None,
+    ):
+        """Parses a registry hive (SOFTWARE/SYSTEM/NTUSER.DAT) already
+        extracted to `dest` into RegistryArtifact rows, the same way
+        _ingest_email turns a .eml into a Message -- the hive itself stays
+        its own EvidenceFile (already created by the caller) regardless of
+        whether parsing succeeds."""
+        if not registry_artifacts.is_available():
+            summary.errors.append(
+                f"{entry.path}: registry hive found — regipy not installed, extracted to {dest} but not parsed"
+            )
+            return
+
+        owner = _derive_owner(entry.path) if hive_name == "NTUSER.DAT" else None
+
+        try:
+            parsed = registry_artifacts.parse_hive(dest, hive_name)
+        except Exception as exc:
+            summary.errors.append(f"{entry.path}: registry hive parsing failed ({exc})")
+            return
+
+        for artifact in parsed:
+            session.add(
+                RegistryArtifact(
+                    case_id=case.id,
+                    data_source_id=data_source_id,
+                    evidence_file_id=evidence.id,
+                    kind=artifact.kind,
+                    hive=hive_name,
+                    owner=owner,
+                    key_path=artifact.key_path,
+                    name=artifact.name,
+                    value=artifact.value,
+                    raw_json=json.dumps(artifact.raw, default=str),
+                    timestamp=artifact.timestamp,
+                )
+            )
+            summary.registry_artifacts += 1
 
 
 class E01Parser(_TskImageParser):

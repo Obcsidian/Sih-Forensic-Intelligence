@@ -13,6 +13,7 @@ import type {
   Message,
   Person,
   ProcessCaseResult,
+  RegistryArtifact,
   Report,
   SearchHit,
   TimelineEvent,
@@ -160,6 +161,8 @@ export const api = {
   listContacts: (caseId: number) => request<Contact[]>(`/cases/${caseId}/contacts`),
   listCalls: (caseId: number) => request<Call[]>(`/cases/${caseId}/calls`),
   listMessages: (caseId: number) => request<Message[]>(`/cases/${caseId}/messages`),
+
+  listRegistryArtifacts: (caseId: number) => request<RegistryArtifact[]>(`/cases/${caseId}/registry-artifacts`),
 
   listReports: (caseId: number) => request<Report[]>(`/cases/${caseId}/reports`),
   generateReport: (caseId: number, redacted: boolean) =>

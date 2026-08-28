@@ -14,6 +14,7 @@ import type {
   EvidenceKind,
   Message,
   Person,
+  RegistryArtifact,
   SearchHit,
   TimelineEvent,
   Transcript,
@@ -28,9 +29,10 @@ import NewCaseDialog from "./NewCaseDialog";
 import AddDataSourceDialog from "./AddDataSourceDialog";
 import LoginScreen from "./LoginScreen";
 
-export type ViewMode = "evidence" | "communications" | "timeline" | "triage" | "search";
+export type ViewMode = "evidence" | "communications" | "timeline" | "triage" | "search" | "artifacts";
 export type TriageTab = "faces" | "anomalies" | "nsfw";
 export type CommTab = "contacts" | "calls" | "messages";
+export type ArtifactTab = "installed_program" | "autorun_entry" | "recent_document" | "os_info" | "network_connection";
 
 export interface EvidenceFilter {
   kinds?: EvidenceKind[];
@@ -66,6 +68,8 @@ export default function Workspace() {
   const [evidenceFilter, setEvidenceFilter] = useState<EvidenceFilter>(ALL_EVIDENCE_FILTER);
   const [triageTab, setTriageTab] = useState<TriageTab>("faces");
   const [commTab, setCommTab] = useState<CommTab>("messages");
+  const [artifactTab, setArtifactTab] = useState<ArtifactTab>("installed_program");
+  const [artifacts, setArtifacts] = useState<RegistryArtifact[]>([]);
 
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceFile | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
@@ -108,7 +112,7 @@ export default function Workspace() {
   const loadCaseData = useCallback(async (caseId: number) => {
     setCaseLoading(true);
     try {
-      const [ev, ppl, tr, ct, cl, ms, tl, au, ds] = await Promise.all([
+      const [ev, ppl, tr, ct, cl, ms, tl, au, ds, ra] = await Promise.all([
         api.listEvidence(caseId),
         api.listPeople(caseId),
         api.listTranscripts(caseId),
@@ -118,6 +122,7 @@ export default function Workspace() {
         api.listTimeline(caseId),
         api.listAudit(caseId),
         api.listDataSources(caseId),
+        api.listRegistryArtifacts(caseId),
       ]);
       setEvidence(ev);
       setPeople(ppl);
@@ -128,6 +133,7 @@ export default function Workspace() {
       setTimeline(tl);
       setAudit(au);
       setDataSources(ds);
+      setArtifacts(ra);
     } finally {
       setCaseLoading(false);
     }
@@ -150,13 +156,17 @@ export default function Workspace() {
     setCases([]);
   }
 
-  function handleNavigate(v: ViewMode, opts?: { evidenceFilter?: EvidenceFilter; triageTab?: TriageTab; commTab?: CommTab }) {
+  function handleNavigate(
+    v: ViewMode,
+    opts?: { evidenceFilter?: EvidenceFilter; triageTab?: TriageTab; commTab?: CommTab; artifactTab?: ArtifactTab }
+  ) {
     setView(v);
     setSelectedEvidence(null);
     if (opts?.evidenceFilter) setEvidenceFilter(opts.evidenceFilter);
     else if (v === "evidence") setEvidenceFilter(ALL_EVIDENCE_FILTER);
     if (opts?.triageTab) setTriageTab(opts.triageTab);
     if (opts?.commTab) setCommTab(opts.commTab);
+    if (opts?.artifactTab) setArtifactTab(opts.artifactTab);
   }
 
   async function handleSearchSubmit() {
@@ -258,6 +268,7 @@ export default function Workspace() {
           contacts={contacts}
           calls={calls}
           messages={messages}
+          artifacts={artifacts}
           activeView={view}
           activeFilterLabel={evidenceFilter.label}
           onNavigate={handleNavigate}
@@ -277,6 +288,9 @@ export default function Workspace() {
                 setTriageTab={setTriageTab}
                 commTab={commTab}
                 setCommTab={setCommTab}
+                artifactTab={artifactTab}
+                setArtifactTab={setArtifactTab}
+                artifacts={artifacts}
                 contacts={contacts}
                 calls={calls}
                 messages={messages}

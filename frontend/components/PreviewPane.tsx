@@ -13,6 +13,70 @@ function fmtBytes(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function isProbablyText(sample: Uint8Array): boolean {
+  if (sample.length === 0) return true;
+  if (sample.includes(0)) return false;
+  let nonPrintable = 0;
+  for (const b of sample) {
+    const printable = (b >= 32 && b < 127) || b === 9 || b === 10 || b === 13 || b >= 128;
+    if (!printable) nonPrintable++;
+  }
+  return nonPrintable / sample.length < 0.05;
+}
+
+function decodeText(bytes: Uint8Array): string {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.slice(2));
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes.slice(2));
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder("utf-8").decode(bytes.slice(3));
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+function extractStrings(bytes: Uint8Array, minLen = 4, maxStrings = 300): string[] {
+  const out: string[] = [];
+  let run = "";
+  for (const b of bytes) {
+    if (b >= 32 && b < 127) {
+      run += String.fromCharCode(b);
+    } else {
+      if (run.length >= minLen) out.push(run);
+      run = "";
+      if (out.length >= maxStrings) break;
+    }
+  }
+  if (run.length >= minLen && out.length < maxStrings) out.push(run);
+  return out;
+}
+
+type Sniff =
+  | { status: "loading" }
+  | { status: "error"; error: string }
+  | { status: "text"; text: string; truncated: boolean }
+  | { status: "binary"; bytes: Uint8Array; truncated: boolean };
+
+function useFileSniff(caseId: number, evidenceId: number, maxBytes: number): Sniff {
+  const [state, setState] = useState<Sniff>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    fetchProtectedBytes(api.evidenceFileUrl(caseId, evidenceId), maxBytes)
+      .then((bytes) => {
+        if (cancelled) return;
+        const truncated = bytes.length >= maxBytes;
+        if (isProbablyText(bytes)) setState({ status: "text", text: decodeText(bytes), truncated });
+        else setState({ status: "binary", bytes, truncated });
+      })
+      .catch((e) => {
+        if (!cancelled) setState({ status: "error", error: e.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId, evidenceId, maxBytes]);
+
+  return state;
+}
+
 export default function PreviewPane({
   caseId,
   evidence,
@@ -67,7 +131,7 @@ export default function PreviewPane({
       <div className="flex-1 overflow-auto p-3 text-xs">
         {tab === "preview" && <PreviewTab caseId={caseId} evidence={evidence} />}
         {tab === "hex" && <HexTab caseId={caseId} evidence={evidence} />}
-        {tab === "text" && <TextTab evidence={evidence} transcripts={transcripts} />}
+        {tab === "text" && <TextTab caseId={caseId} evidence={evidence} transcripts={transcripts} />}
         {tab === "metadata" && <MetadataTab evidence={evidence} />}
         {tab === "annotations" && <AnnotationsTab evidence={evidence} people={people} />}
         {tab === "custody" && <CustodyTab evidence={evidence} audit={audit} />}
@@ -84,6 +148,12 @@ function PreviewTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFi
   if (!url) return null;
 
   if (evidence.kind === "photo") return <img src={url} alt={evidence.file_name} className="max-h-52 rounded border border-border" />;
+  if (evidence.kind === "video")
+    return (
+      <video controls src={url} className="max-h-52 rounded border border-border">
+        Your browser cannot play this video.
+      </video>
+    );
   if (evidence.kind === "audio")
     return (
       <audio controls src={url} className="w-full">
@@ -91,7 +161,46 @@ function PreviewTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFi
       </audio>
     );
   if (evidence.file_name.toLowerCase().endsWith(".eml")) return <EmailPreview caseId={caseId} evidence={evidence} />;
-  return <div className="text-gray-500">No inline preview for this file type — use the Hex or File Metadata tab.</div>;
+  return <GenericPreview caseId={caseId} evidence={evidence} />;
+}
+
+const GENERIC_PREVIEW_BYTES = 16384;
+
+function GenericPreview({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }) {
+  const sniff = useFileSniff(caseId, evidence.id, GENERIC_PREVIEW_BYTES);
+
+  if (sniff.status === "loading") return <div className="text-gray-600">Reading file…</div>;
+  if (sniff.status === "error") return <div className="text-bad">Could not read file: {sniff.error}</div>;
+
+  if (sniff.status === "text") {
+    return (
+      <div>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-border bg-panel2 p-2 text-[11px] text-gray-300">
+          {sniff.text}
+        </pre>
+        {sniff.truncated && (
+          <div className="mt-1 text-[10px] text-gray-600">
+            Showing the first {fmtBytes(GENERIC_PREVIEW_BYTES)} — open the Text tab for more, or Hex for raw bytes.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const strings = extractStrings(sniff.bytes, 4, 20);
+  return (
+    <div className="space-y-2">
+      <div className="text-gray-500">Binary file — no direct preview. Readable strings found inside:</div>
+      {strings.length === 0 ? (
+        <div className="text-gray-600">No readable strings found in the first {fmtBytes(GENERIC_PREVIEW_BYTES)}.</div>
+      ) : (
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded border border-border bg-panel2 p-2 text-[11px] text-gray-400">
+          {strings.join("\n")}
+        </pre>
+      )}
+      <div className="text-[10px] text-gray-600">Open the Text tab for a fuller strings scan, or Hex for raw bytes.</div>
+    </div>
+  );
 }
 
 function EmailPreview({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }) {
@@ -181,14 +290,51 @@ function HexTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }
   return <div>{rows}</div>;
 }
 
-function TextTab({ evidence, transcripts }: { evidence: EvidenceFile; transcripts: Transcript[] }) {
+const TEXT_TAB_BYTES = 262144;
+
+function TextTab({ caseId, evidence, transcripts }: { caseId: number; evidence: EvidenceFile; transcripts: Transcript[] }) {
   const transcript = transcripts.find((t) => t.evidence_file_id === evidence.id);
-  if (evidence.kind !== "audio") return <div className="text-gray-600">Text extraction is only available for audio (via transcription).</div>;
-  if (!transcript) return <div className="text-gray-600">No transcript yet — run case processing or install faster-whisper.</div>;
+  if (evidence.kind === "audio") {
+    if (!transcript) return <div className="text-gray-600">No transcript yet — run case processing or install faster-whisper.</div>;
+    return (
+      <div>
+        <div className="mb-2 text-[11px] text-gray-500">language: {transcript.language || "unknown"}</div>
+        <div className="whitespace-pre-wrap text-gray-200">{transcript.text || "(empty transcript)"}</div>
+      </div>
+    );
+  }
+  return <GenericTextTab caseId={caseId} evidence={evidence} />;
+}
+
+function GenericTextTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }) {
+  const sniff = useFileSniff(caseId, evidence.id, TEXT_TAB_BYTES);
+
+  if (sniff.status === "loading") return <div className="text-gray-600">Reading file…</div>;
+  if (sniff.status === "error") return <div className="text-bad">Could not read file: {sniff.error}</div>;
+
+  if (sniff.status === "text") {
+    return (
+      <div>
+        <div className="whitespace-pre-wrap break-all text-gray-200">{sniff.text}</div>
+        {sniff.truncated && (
+          <div className="mt-2 text-[10px] text-gray-600">Truncated at {fmtBytes(TEXT_TAB_BYTES)} — file is larger.</div>
+        )}
+      </div>
+    );
+  }
+
+  const strings = extractStrings(sniff.bytes, 4);
   return (
     <div>
-      <div className="mb-2 text-[11px] text-gray-500">language: {transcript.language || "unknown"}</div>
-      <div className="whitespace-pre-wrap text-gray-200">{transcript.text || "(empty transcript)"}</div>
+      <div className="mb-2 text-gray-500">
+        Binary file — extracted {strings.length} printable string{strings.length === 1 ? "" : "s"} (min length 4) from the first{" "}
+        {fmtBytes(TEXT_TAB_BYTES)}:
+      </div>
+      {strings.length === 0 ? (
+        <div className="text-gray-600">No readable strings found.</div>
+      ) : (
+        <div className="whitespace-pre-wrap break-all font-mono text-[11px] text-gray-400">{strings.join("\n")}</div>
+      )}
     </div>
   );
 }

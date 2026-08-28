@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Call, Contact, DataSource, EvidenceFile, Message, Person, TimelineEvent, Transcript } from "@/lib/types";
-import type { CommTab, EvidenceFilter, TriageTab, ViewMode } from "./Workspace";
+import type { Call, Contact, DataSource, EvidenceFile, Message, Person, RegistryArtifact, TimelineEvent, Transcript } from "@/lib/types";
+import type { ArtifactTab, CommTab, EvidenceFilter, TriageTab, ViewMode } from "./Workspace";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
@@ -51,6 +51,7 @@ export default function TreeSidebar({
   contacts,
   calls,
   messages,
+  artifacts,
   activeView,
   activeFilterLabel,
   onNavigate,
@@ -64,9 +65,13 @@ export default function TreeSidebar({
   contacts: Contact[];
   calls: Call[];
   messages: Message[];
+  artifacts: RegistryArtifact[];
   activeView: ViewMode;
   activeFilterLabel: string;
-  onNavigate: (v: ViewMode, opts?: { evidenceFilter?: EvidenceFilter; triageTab?: TriageTab; commTab?: CommTab }) => void;
+  onNavigate: (
+    v: ViewMode,
+    opts?: { evidenceFilter?: EvidenceFilter; triageTab?: TriageTab; commTab?: CommTab; artifactTab?: ArtifactTab }
+  ) => void;
   onAddDataSource: () => void;
 }) {
   const photoCount = evidence.filter((e) => e.kind === "photo").length;
@@ -78,6 +83,11 @@ export default function TreeSidebar({
   const geotagged = evidence.filter((e) => e.latitude !== null).length;
   const nsfwFlagged = evidence.filter((e) => e.nsfw_flagged).length;
   const anomalyCount = timeline.filter((e) => e.event_type === "anomaly").length;
+  const installedProgramCount = artifacts.filter((a) => a.kind === "installed_program").length;
+  const autorunEntryCount = artifacts.filter((a) => a.kind === "autorun_entry").length;
+  const recentDocumentCount = artifacts.filter((a) => a.kind === "recent_document").length;
+  const osInfoCount = artifacts.filter((a) => a.kind === "os_info").length;
+  const networkConnectionCount = artifacts.filter((a) => a.kind === "network_connection").length;
 
   const isEv = (label: string) => activeView === "evidence" && activeFilterLabel === label;
 
@@ -132,6 +142,11 @@ export default function TreeSidebar({
           active={isEv("Geotagged photos")}
           onClick={() => onNavigate("evidence", { evidenceFilter: { onlyGeotagged: true, label: "Geotagged photos" } })}
         />
+        <Row icon="💻" label="Installed Programs" count={installedProgramCount} onClick={() => onNavigate("artifacts", { artifactTab: "installed_program" })} />
+        <Row icon="▶" label="Run Programs" count={autorunEntryCount} onClick={() => onNavigate("artifacts", { artifactTab: "autorun_entry" })} />
+        <Row icon="🕘" label="Recent Documents" count={recentDocumentCount} onClick={() => onNavigate("artifacts", { artifactTab: "recent_document" })} />
+        <Row icon="🖥" label="Operating System Information" count={osInfoCount} onClick={() => onNavigate("artifacts", { artifactTab: "os_info" })} />
+        <Row icon="📶" label="Wireless Networks" count={networkConnectionCount} onClick={() => onNavigate("artifacts", { artifactTab: "network_connection" })} />
       </Section>
     </div>
   );

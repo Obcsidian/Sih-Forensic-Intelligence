@@ -109,6 +109,7 @@ class IngestSummary:
     videos: int = 0
     audio_files: int = 0
     device_events: int = 0
+    registry_artifacts: int = 0
     errors: list[str] = field(default_factory=list)
 
 

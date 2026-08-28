@@ -203,6 +203,24 @@ export interface ChainVerification {
   reason: string | null;
 }
 
+export type RegistryArtifactKind = "installed_program" | "autorun_entry" | "recent_document" | "os_info" | "network_connection";
+
+export interface RegistryArtifact {
+  id: number;
+  case_id: number;
+  data_source_id: number | null;
+  evidence_file_id: number | null;
+  kind: RegistryArtifactKind;
+  hive: string;
+  owner: string | null;
+  key_path: string;
+  name: string;
+  value: string;
+  raw_json: string;
+  timestamp: string | null;
+  created_at: string;
+}
+
 export interface ProcessCaseResult {
   faces_detected: number;
   people_found: number;
