@@ -1,4 +1,4 @@
-# Dependencies — ForensAI (Sih-Forensic-Intelligence)
+# Dependencies — NetSherlock (Sih-Forensic-Intelligence)
 
 All dependencies required to set up and run this project locally.
 
@@ -11,7 +11,7 @@ Install these before touching `pip`/`npm`:
 | Python 3.11+ | Backend runtime | `python -m venv venv` recommended |
 | Node.js 18+ / npm | Frontend runtime | Next.js 16 requires a recent Node LTS |
 | Redis | Celery broker/result backend | Optional for local dev — if unreachable, Celery tasks run eagerly (inline) per `.env.example` |
-| PostgreSQL | AI-output storage (production) | Optional for local dev — SQLite (`forensai.db`) is the zero-setup default |
+| PostgreSQL | AI-output storage (production) | Optional for local dev — SQLite (`netsherlock.db`) is the zero-setup default |
 | Java + Jython env | Autopsy fork build (forensic core) | Only needed if building/running the Autopsy ingest core; see Autopsy's own build docs |
 | ffmpeg | Audio/video decoding for faster-whisper / opencv | Required on PATH for speech-to-text and video frame extraction to work |
 

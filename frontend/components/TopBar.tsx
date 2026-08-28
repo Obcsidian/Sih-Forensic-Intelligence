@@ -59,7 +59,7 @@ export default function TopBar({
             <span className="flex h-5 w-5 items-center justify-center rounded bg-accent/20 text-[11px] text-accent">
               ◆
             </span>
-            <span className="text-sm font-semibold text-white">ForensAI</span>
+            <span className="text-sm font-semibold text-white">NetSherlock</span>
           </div>
           <nav className="relative flex items-center gap-3 text-xs text-gray-400">
             {MENU_ITEMS.map((m) => (

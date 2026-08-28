@@ -17,6 +17,7 @@ class EvidenceKind(StrEnum):
 class EvidenceFile(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     case_id: int = Field(foreign_key="case.id", index=True)
+    data_source_id: int | None = Field(default=None, foreign_key="datasource.id", index=True)
     kind: EvidenceKind
     original_path: str
     file_name: str

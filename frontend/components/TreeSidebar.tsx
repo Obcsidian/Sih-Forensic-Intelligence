@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Call, Case, Contact, EvidenceFile, Message, Person, TimelineEvent, Transcript } from "@/lib/types";
+import type { Call, Contact, DataSource, EvidenceFile, Message, Person, TimelineEvent, Transcript } from "@/lib/types";
 import type { CommTab, EvidenceFilter, TriageTab, ViewMode } from "./Workspace";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -43,8 +43,7 @@ function Row({
 }
 
 export default function TreeSidebar({
-  sourcePath,
-  caseStatus,
+  dataSources,
   evidence,
   people,
   transcripts,
@@ -55,9 +54,9 @@ export default function TreeSidebar({
   activeView,
   activeFilterLabel,
   onNavigate,
+  onAddDataSource,
 }: {
-  sourcePath: string;
-  caseStatus: Case["status"];
+  dataSources: DataSource[];
   evidence: EvidenceFile[];
   people: Person[];
   transcripts: Transcript[];
@@ -68,6 +67,7 @@ export default function TreeSidebar({
   activeView: ViewMode;
   activeFilterLabel: string;
   onNavigate: (v: ViewMode, opts?: { evidenceFilter?: EvidenceFilter; triageTab?: TriageTab; commTab?: CommTab }) => void;
+  onAddDataSource: () => void;
 }) {
   const photoCount = evidence.filter((e) => e.kind === "photo").length;
   const videoCount = evidence.filter((e) => e.kind === "video").length;
@@ -84,8 +84,19 @@ export default function TreeSidebar({
   return (
     <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-border bg-panel py-2 text-sm">
       <Section title="Data Sources">
-        <Row icon="⛁" label={sourcePath.split(/[\\/]/).pop() || sourcePath} active={false} onClick={() => onNavigate("evidence")} />
-        <div className="px-8 pb-1 text-[10px] text-gray-600">status: {caseStatus}</div>
+        {dataSources.map((ds) => (
+          <div key={ds.id}>
+            <Row icon="⛁" label={ds.name} active={false} onClick={() => onNavigate("evidence")} />
+            <div className="px-8 pb-1 text-[10px] text-gray-600">status: {ds.status}</div>
+          </div>
+        ))}
+        <div
+          className="tree-row cursor-pointer text-gray-500 hover:text-accent"
+          onClick={onAddDataSource}
+        >
+          <span className="w-4 text-center">+</span>
+          <span className="flex-1">Add data source</span>
+        </div>
       </Section>
 
       <Section title="File Types">

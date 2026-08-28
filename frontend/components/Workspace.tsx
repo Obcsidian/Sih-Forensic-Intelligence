@@ -9,6 +9,7 @@ import type {
   Case,
   ChainVerification,
   Contact,
+  DataSource,
   EvidenceFile,
   EvidenceKind,
   Message,
@@ -24,6 +25,7 @@ import PreviewPane from "./PreviewPane";
 import MetadataPanel from "./MetadataPanel";
 import StatusBar from "./StatusBar";
 import NewCaseDialog from "./NewCaseDialog";
+import AddDataSourceDialog from "./AddDataSourceDialog";
 import LoginScreen from "./LoginScreen";
 
 export type ViewMode = "evidence" | "communications" | "timeline" | "triage" | "search";
@@ -46,8 +48,10 @@ export default function Workspace() {
   const [cases, setCases] = useState<Case[]>([]);
   const [activeCase, setActiveCase] = useState<Case | null>(null);
   const [showNewCaseDialog, setShowNewCaseDialog] = useState(false);
+  const [showAddDataSourceDialog, setShowAddDataSourceDialog] = useState(false);
   const [chain, setChain] = useState<ChainVerification | null>(null);
 
+  const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
@@ -75,7 +79,7 @@ export default function Workspace() {
 
   // restore session on load
   useEffect(() => {
-    const token = typeof window !== "undefined" ? window.localStorage.getItem("forensai_token") : null;
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("netsherlock_token") : null;
     if (!token) {
       setAuthChecked(true);
       return;
@@ -104,7 +108,7 @@ export default function Workspace() {
   const loadCaseData = useCallback(async (caseId: number) => {
     setCaseLoading(true);
     try {
-      const [ev, ppl, tr, ct, cl, ms, tl, au] = await Promise.all([
+      const [ev, ppl, tr, ct, cl, ms, tl, au, ds] = await Promise.all([
         api.listEvidence(caseId),
         api.listPeople(caseId),
         api.listTranscripts(caseId),
@@ -113,6 +117,7 @@ export default function Workspace() {
         api.listMessages(caseId),
         api.listTimeline(caseId),
         api.listAudit(caseId),
+        api.listDataSources(caseId),
       ]);
       setEvidence(ev);
       setPeople(ppl);
@@ -122,6 +127,7 @@ export default function Workspace() {
       setMessages(ms);
       setTimeline(tl);
       setAudit(au);
+      setDataSources(ds);
     } finally {
       setCaseLoading(false);
     }
@@ -138,7 +144,7 @@ export default function Workspace() {
   }
 
   function handleLogout() {
-    window.localStorage.removeItem("forensai_token");
+    window.localStorage.removeItem("netsherlock_token");
     setAuth(null);
     setActiveCase(null);
     setCases([]);
@@ -230,7 +236,7 @@ export default function Workspace() {
         chain={chain}
         view={view}
         setView={(v) => handleNavigate(v)}
-        onAddDataSource={() => setShowNewCaseDialog(true)}
+        onAddDataSource={() => setShowAddDataSourceDialog(true)}
         onCloseCase={() => setActiveCase(null)}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
@@ -244,8 +250,7 @@ export default function Workspace() {
 
       <div className="flex min-h-0 flex-1">
         <TreeSidebar
-          sourcePath={activeCase.source_path}
-          caseStatus={activeCase.status}
+          dataSources={dataSources}
           evidence={evidence}
           people={people}
           transcripts={transcripts}
@@ -256,6 +261,7 @@ export default function Workspace() {
           activeView={view}
           activeFilterLabel={evidenceFilter.label}
           onNavigate={handleNavigate}
+          onAddDataSource={() => setShowAddDataSourceDialog(true)}
         />
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -331,6 +337,17 @@ export default function Workspace() {
         />
       )}
 
+      {showAddDataSourceDialog && (
+        <AddDataSourceDialog
+          caseId={activeCase.id}
+          onClose={() => setShowAddDataSourceDialog(false)}
+          onIngested={async () => {
+            setShowAddDataSourceDialog(false);
+            await refreshCase();
+          }}
+        />
+      )}
+
       {toast && (
         <div
           className="fixed bottom-10 right-4 max-w-sm rounded border border-border bg-panel2 px-4 py-2 text-xs text-gray-200 shadow-xl"
@@ -363,7 +380,7 @@ function CaseChooser({
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="flex h-6 w-6 items-center justify-center rounded bg-accent/20 text-accent">◆</span>
-          <span className="font-semibold text-white">ForensAI</span>
+          <span className="font-semibold text-white">NetSherlock</span>
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-400">
           <span>
@@ -379,13 +396,13 @@ function CaseChooser({
         <div className="mb-4 flex items-center justify-between">
           <h1 className="text-lg font-semibold text-white">Cases</h1>
           <button onClick={onNew} className="rounded bg-accent px-3 py-1.5 text-xs font-semibold text-black hover:bg-accent/90">
-            + Add data source
+            + New case
           </button>
         </div>
 
         {cases.length === 0 ? (
           <div className="rounded border border-dashed border-border p-8 text-center text-sm text-gray-500">
-            No cases yet. Click &quot;Add data source&quot; to ingest a case-export folder (see{" "}
+            No cases yet. Click &quot;New case&quot; to ingest a case-export folder (see{" "}
             <code className="text-gray-400">sample_case/</code>).
           </div>
         ) : (

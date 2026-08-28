@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, fetchProtectedBytes } from "@/lib/api";
+import { api, fetchProtectedBlob, fetchProtectedBytes } from "@/lib/api";
 import { useAuthedBlobUrl } from "@/lib/useAuthedBlobUrl";
 import type { AuditLogEntry, EvidenceFile, Person, Transcript } from "@/lib/types";
 
@@ -90,7 +90,60 @@ function PreviewTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFi
         Your browser cannot play this audio.
       </audio>
     );
+  if (evidence.file_name.toLowerCase().endsWith(".eml")) return <EmailPreview caseId={caseId} evidence={evidence} />;
   return <div className="text-gray-500">No inline preview for this file type — use the Hex or File Metadata tab.</div>;
+}
+
+function EmailPreview({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }) {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setText(null);
+    setError(null);
+    fetchProtectedBlob(api.evidenceFileUrl(caseId, evidence.id))
+      .then((blob) => blob.text())
+      .then(setText)
+      .catch((e) => setError(e.message));
+  }, [caseId, evidence.id]);
+
+  if (error) return <div className="text-bad">Could not load file: {error}</div>;
+  if (text === null) return <div className="text-gray-600">Loading email…</div>;
+
+  const headerEnd = text.search(/\r?\n\r?\n/);
+  const headerBlock = headerEnd === -1 ? text : text.slice(0, headerEnd);
+  const body = headerEnd === -1 ? "" : text.slice(headerEnd).replace(/^\r?\n\r?\n/, "").trim();
+
+  const getHeader = (name: string) => {
+    const m = headerBlock.match(new RegExp(`^${name}:\\s*(.*)$`, "im"));
+    return m ? m[1].trim() : null;
+  };
+
+  const headerRows: [string, string | null][] = [
+    ["From", getHeader("From")],
+    ["To", getHeader("To")],
+    ["Cc", getHeader("Cc")],
+    ["Subject", getHeader("Subject")],
+    ["Date", getHeader("Date")],
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div className="space-y-0.5 rounded border border-border bg-panel2 p-2 text-[11px]">
+        {headerRows
+          .filter(([, v]) => v)
+          .map(([k, v]) => (
+            <div key={k}>
+              <span className="text-gray-500">{k}: </span>
+              <span className="text-gray-200">{v}</span>
+            </div>
+          ))}
+      </div>
+      <div className="whitespace-pre-wrap text-gray-300">
+        {body || "(no readable plain-text body — likely HTML or multipart; use the Hex tab for raw bytes)"}
+      </div>
+    </div>
+  );
 }
 
 function HexTab({ caseId, evidence }: { caseId: number; evidence: EvidenceFile }) {

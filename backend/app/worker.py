@@ -9,6 +9,8 @@ so these actually go async.
 """
 
 import logging
+import socket
+from urllib.parse import urlparse
 
 from celery import Celery
 from sqlmodel import Session, select
@@ -20,19 +22,47 @@ from app.models.evidence_file import EvidenceFile, EvidenceKind
 from app.services import anomaly_detection, audit_log, face_recognition, nsfw_screening, semantic_search, transcription
 from app.models.transcript import Transcript
 
-logger = logging.getLogger("forensai.worker")
+logger = logging.getLogger("netsherlock.worker")
 settings = get_settings()
 
 celery_app = Celery(
-    "forensai",
+    "netsherlock",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
 )
-celery_app.conf.task_default_queue = "forensai"
+celery_app.conf.task_default_queue = "netsherlock"
+
+
+def _broker_reachable(url: str, timeout: float = 0.3) -> bool:
+    """Fast raw-socket probe for the broker port.
+
+    Skips straight to False on anything unreachable instead of letting
+    kombu/Celery's own connection retry logic run -- on a refused
+    connection that can take 10s+ (getaddrinfo tries both the IPv4 and
+    IPv6 loopback candidates, then several backoff retries), which is
+    long enough that an ingest request sitting on it looks hung in the
+    browser rather than just falling back to inline execution.
+    """
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 6379
+    except ValueError:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def run_task(task, *args, **kwargs):
     """Dispatch to Celery; fall back to running inline if the broker is unreachable."""
+    if not _broker_reachable(settings.celery_broker_url):
+        logger.warning(
+            "Celery broker unreachable at %s — running '%s' inline instead", settings.celery_broker_url, task.name
+        )
+        return task.run(*args, **kwargs)
     try:
         return task.delay(*args, **kwargs)
     except Exception as exc:  # kombu/redis connection errors vary by backend
@@ -40,7 +70,7 @@ def run_task(task, *args, **kwargs):
         return task.run(*args, **kwargs)
 
 
-@celery_app.task(name="forensai.process_case")
+@celery_app.task(name="netsherlock.process_case")
 def process_case_task(case_id: int) -> dict:
     warnings: list[str] = []
     faces_detected = 0

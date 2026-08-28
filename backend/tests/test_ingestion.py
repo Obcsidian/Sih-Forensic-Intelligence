@@ -3,6 +3,7 @@ import json
 from app.models.call import Call
 from app.models.case import Case
 from app.models.contact import Contact
+from app.models.evidence_file import EvidenceFile
 from app.models.message import Message
 from app.models.timeline_event import TimelineEvent, TimelineEventType
 from app.services.ingestion import CaseFolderParser
@@ -63,3 +64,41 @@ def test_ingest_populates_contacts_calls_messages_and_timeline(session, tmp_path
     assert TimelineEventType.message in event_types
     assert TimelineEventType.app_install in event_types
     assert TimelineEventType.app_uninstall in event_types
+
+
+def test_ingest_parses_eml_files_into_messages(session, tmp_path):
+    case = Case(name="Email Test Case", source_path=str(tmp_path))
+    session.add(case)
+    session.commit()
+    session.refresh(case)
+
+    emails_dir = tmp_path / "emails"
+    emails_dir.mkdir()
+    (emails_dir / "msg1.eml").write_bytes(
+        b"From: alice@example.com\r\n"
+        b"To: bob@example.com\r\n"
+        b"Subject: Meeting tonight\r\n"
+        b"Date: Thu, 1 Jan 2026 10:00:00 +0000\r\n"
+        b"\r\n"
+        b"See you at 9pm.\r\n"
+    )
+    (emails_dir / "unparseable.eml").write_bytes(b"not really an email, no headers")
+
+    summary = CaseFolderParser().ingest(session, case, tmp_path)
+
+    assert summary.messages == 1
+    assert len(summary.errors) == 1
+    assert "unparseable.eml" in summary.errors[0]
+
+    messages = session.exec(select(Message).where(Message.case_id == case.id)).all()
+    assert len(messages) == 1
+    assert messages[0].sender == "alice@example.com"
+    assert messages[0].recipient == "bob@example.com"
+    assert messages[0].app == "email"
+    assert messages[0].body.startswith("Subject: Meeting tonight")
+
+    evidence = session.exec(select(EvidenceFile).where(EvidenceFile.case_id == case.id)).all()
+    assert {e.file_name for e in evidence} == {"msg1.eml", "unparseable.eml"}
+
+    events = session.exec(select(TimelineEvent).where(TimelineEvent.case_id == case.id)).all()
+    assert any(e.event_type == TimelineEventType.message and "alice@example.com" in e.summary for e in events)

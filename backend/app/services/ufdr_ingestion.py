@@ -41,7 +41,7 @@ UFDR_EXTENSIONS = {".ufdr", ".ufd"}
 
 CONTACT_TYPES = {"contact", "contacts"}
 CALL_TYPES = {"call", "calls"}
-MESSAGE_TYPES = {"sms", "mms", "chat", "chatmessage", "instantmessage", "message", "im"}
+MESSAGE_TYPES = {"sms", "mms", "chat", "chatmessage", "instantmessage", "message", "im", "email", "emails", "mail"}
 MEDIA_TYPES = {"image", "video", "audio", "multimediafile", "file", "picture", "photo"}
 
 NAME_FIELDS = {"name", "contact name", "displayname"}
@@ -52,6 +52,7 @@ DURATION_FIELDS = {"duration", "duration (seconds)", "call duration"}
 BODY_FIELDS = {"body", "text", "message", "content"}
 FROM_FIELDS = {"from", "sender", "source"}
 TO_FIELDS = {"to", "recipient", "destination", "party"}
+SUBJECT_FIELDS = {"subject", "title"}
 SOURCE_APP_FIELDS = {"source", "app", "source application", "network", "service"}
 FILENAME_FIELDS = {"filename", "file name"}
 PATH_FIELDS = {"local path", "path", "file path", "source file"}
@@ -124,7 +125,7 @@ def _find_report_xml(zf: zipfile.ZipFile) -> str | None:
 
 
 class CellebriteUFDRParser(UFDRParser):
-    def ingest(self, session: Session, case: Case, source: Path) -> IngestSummary:
+    def ingest(self, session: Session, case: Case, source: Path, data_source_id: int | None = None) -> IngestSummary:
         summary = IngestSummary()
 
         try:
@@ -167,7 +168,7 @@ class CellebriteUFDRParser(UFDRParser):
                 elif model_type in MESSAGE_TYPES:
                     self._ingest_message(session, case, fields, summary)
                 elif model_type in MEDIA_TYPES:
-                    self._ingest_media(session, case, fields, zf, extract_dir, summary, seen_names)
+                    self._ingest_media(session, case, fields, zf, extract_dir, summary, seen_names, data_source_id)
                 else:
                     unhandled[raw_type] = unhandled.get(raw_type, 0) + 1
 
@@ -234,6 +235,10 @@ class CellebriteUFDRParser(UFDRParser):
         body = _get(fields, BODY_FIELDS) or ""
         app = _get(fields, SOURCE_APP_FIELDS) or "ufdr"
 
+        subject = _get(fields, SUBJECT_FIELDS)
+        if subject:
+            body = f"Subject: {subject}\n\n{body}" if body else f"Subject: {subject}"
+
         msg = Message(case_id=case.id, sender=sender, recipient=recipient, body=body, timestamp=ts, app=app)
         session.add(msg)
         session.flush()
@@ -250,7 +255,7 @@ class CellebriteUFDRParser(UFDRParser):
         )
         summary.messages += 1
 
-    def _ingest_media(self, session, case, fields, zf, extract_dir, summary, seen_names):
+    def _ingest_media(self, session, case, fields, zf, extract_dir, summary, seen_names, data_source_id=None):
         path_hint = _get(fields, PATH_FIELDS)
         filename = _get(fields, FILENAME_FIELDS) or (Path(path_hint).name if path_hint else None)
         if not filename:
@@ -295,6 +300,7 @@ class CellebriteUFDRParser(UFDRParser):
 
         evidence = EvidenceFile(
             case_id=case.id,
+            data_source_id=data_source_id,
             kind=kind,
             original_path=str(dest),
             file_name=filename,

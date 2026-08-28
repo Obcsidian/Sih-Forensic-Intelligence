@@ -31,6 +31,20 @@ export interface IngestSummary {
   errors: string[];
 }
 
+export type DataSourceStatus = "created" | "ingesting" | "ready" | "failed";
+
+export interface DataSource {
+  id: number;
+  case_id: number;
+  name: string;
+  source_path: string;
+  status: DataSourceStatus;
+  error: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type EvidenceKind = "photo" | "video" | "audio" | "document" | "other";
 
 export interface EvidenceFile {

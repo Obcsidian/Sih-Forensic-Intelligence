@@ -13,6 +13,7 @@ def session():
         call,
         case,
         contact,
+        data_source,
         evidence_file,
         face_detection,
         message,

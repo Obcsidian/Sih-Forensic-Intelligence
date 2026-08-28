@@ -1,4 +1,4 @@
-# ForensAI (working title)
+# NetSherlock (working title)
 
 **An open-source digital forensic investigation platform — Autopsy, reimagined with AI-driven triage and reporting.**
 
@@ -8,7 +8,7 @@
 
 Commercial digital forensics suites (Cellebrite, Magnet AXIOM) are powerful but expensive, closed-source, and out of reach for smaller labs, NGOs, independent investigators, and academic use. Meanwhile, open-source tools like Autopsy provide solid forensic parsing but lack modern AI-assisted triage — investigators still manually scroll through thousands of photos, hours of audio, and endless message threads.
 
-**ForensAI** forks Autopsy's proven forensic core and layers on AI capabilities — facial recognition, transcription, semantic search, and automated reporting — to drastically cut investigation time while preserving the forensic integrity (hashing, chain-of-custody) that makes evidence admissible.
+**NetSherlock** forks Autopsy's proven forensic core and layers on AI capabilities — facial recognition, transcription, semantic search, and automated reporting — to drastically cut investigation time while preserving the forensic integrity (hashing, chain-of-custody) that makes evidence admissible.
 
 ---
 
@@ -22,7 +22,7 @@ Commercial digital forensics suites (Cellebrite, Magnet AXIOM) are powerful but 
 
 ### AI-Augmented Capabilities
 - **Facial Recognition & Clustering** — detect and cluster people across large photo/video collections to rapidly triage who appears in a case
-- **Speech-to-Text** — transcribe call recordings and voice notes for full-text search, with multi-language transcription and translation
+- **Speech-to-Text** — transcribe call recordings and voice notes for full-text search, with automatic language detection and multi-language transcription (translation-to-English planned)
 - **Text-to-Speech** — accessible audio playback of flagged evidence and case summaries for review
 - **Automated Report Generation** — aggregates flagged evidence and AI outputs into structured, exportable documentation
 - **Entity & Relationship Graph** — auto-extract contacts and phone numbers, visualize communication patterns as a graph
@@ -151,6 +151,8 @@ Every ingested file is hashed (SHA-256) at acquisition time, matching Autopsy's 
 - [ ] Mobile app support for field triage
 - [ ] Cloud/on-prem hybrid deployment options
 - [ ] Expanded language support for STT/TTS
+
+For the full Autopsy feature-by-feature parity checklist (what upstream Autopsy has that NetSherlock doesn't yet, and the suggested build order), see [PROJECT_PROPOSAL.md §7](PROJECT_PROPOSAL.md#7-autopsy-feature-parity-roadmap).
 
 ---
 

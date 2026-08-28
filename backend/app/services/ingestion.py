@@ -37,11 +37,14 @@ from app.models.evidence_file import EvidenceFile, EvidenceKind
 from app.models.message import Message
 from app.models.timeline_event import TimelineEvent, TimelineEventType
 from app.services import audit_log
+from app.services.email_parsing import format_message_body, parse_eml
 from app.services.file_signature import detect_file_signature
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi"}
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
+DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".rtf", ".odt"}
+EMAIL_EXTENSIONS = {".eml"}
 
 
 def sha256_of_file(path: Path) -> str:
@@ -113,18 +116,19 @@ class UFDRParser(ABC):
     """Interface a real Autopsy/UFDR/E01 parser would implement to replace CaseFolderParser."""
 
     @abstractmethod
-    def ingest(self, session: Session, case: Case, source: Path) -> IngestSummary: ...
+    def ingest(self, session: Session, case: Case, source: Path, data_source_id: int | None = None) -> IngestSummary: ...
 
 
 class CaseFolderParser(UFDRParser):
-    def ingest(self, session: Session, case: Case, source: Path) -> IngestSummary:
+    def ingest(self, session: Session, case: Case, source: Path, data_source_id: int | None = None) -> IngestSummary:
         summary = IngestSummary()
 
         self._ingest_contacts(session, case, source, summary)
         self._ingest_calls(session, case, source, summary)
         self._ingest_messages(session, case, source, summary)
         recovered_files = self._ingest_device_events(session, case, source, summary)
-        self._ingest_media(session, case, source, summary, recovered_files)
+        self._ingest_media(session, case, source, summary, recovered_files, data_source_id)
+        self._ingest_emails(session, case, source, summary, data_source_id)
 
         case.status = CaseStatus.processing
         session.add(case)
@@ -244,7 +248,7 @@ class CaseFolderParser(UFDRParser):
         session.commit()
         return recovered_files
 
-    def _ingest_media(self, session, case, source, summary, recovered_files: set[str]):
+    def _ingest_media(self, session, case, source, summary, recovered_files: set[str], data_source_id: int | None = None):
         for subdir, kinds in ((source / "photos", (PHOTO_EXTENSIONS, EvidenceKind.photo)), (source / "audio", (AUDIO_EXTENSIONS, EvidenceKind.audio))):
             if not subdir.exists():
                 continue
@@ -260,6 +264,7 @@ class CaseFolderParser(UFDRParser):
 
                 evidence = EvidenceFile(
                         case_id=case.id,
+                        data_source_id=data_source_id,
                         kind=kind,
                         original_path=str(file_path),
                         file_name=file_path.name,
@@ -315,3 +320,65 @@ class CaseFolderParser(UFDRParser):
                     payload={"file_name": evidence.file_name, "sha256": evidence.sha256, "kind": kind.value},
                 )
         session.commit()
+
+    def _ingest_emails(self, session, case, source, summary, data_source_id: int | None = None):
+        subdir = source / "emails"
+        if not subdir.exists():
+            return
+        for file_path in sorted(subdir.iterdir()):
+            if not file_path.is_file() or file_path.suffix.lower() not in EMAIL_EXTENSIONS:
+                continue
+
+            evidence = EvidenceFile(
+                case_id=case.id,
+                data_source_id=data_source_id,
+                kind=EvidenceKind.document,
+                original_path=str(file_path),
+                file_name=file_path.name,
+                sha256=sha256_of_file(file_path),
+                size_bytes=file_path.stat().st_size,
+            )
+            session.add(evidence)
+            session.flush()
+
+            parsed = parse_eml(file_path.read_bytes())
+            if parsed is None or parsed.sent_at is None:
+                summary.errors.append(
+                    f"{file_path.name}: could not parse email headers (missing/unparseable From or Date); "
+                    "kept as a document only"
+                )
+                session.commit()
+                continue
+
+            recipient = ", ".join(parsed.recipients) if parsed.recipients else "unknown"
+            msg = Message(
+                case_id=case.id,
+                sender=parsed.sender,
+                recipient=recipient,
+                body=format_message_body(parsed),
+                timestamp=parsed.sent_at,
+                app="email",
+            )
+            session.add(msg)
+            session.flush()
+            preview = (msg.body[:60] + "...") if len(msg.body) > 60 else msg.body
+            session.add(
+                TimelineEvent(
+                    case_id=case.id,
+                    event_type=TimelineEventType.message,
+                    timestamp=parsed.sent_at,
+                    summary=f"{msg.sender} -> {recipient}: {preview}",
+                    source_table="message",
+                    source_id=msg.id,
+                )
+            )
+            summary.messages += 1
+
+            audit_log.append_entry(
+                session,
+                actor="system",
+                action="ingest.file",
+                case_id=case.id,
+                payload={"file_name": evidence.file_name, "sha256": evidence.sha256, "kind": "email"},
+            )
+            session.commit()

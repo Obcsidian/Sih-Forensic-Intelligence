@@ -5,6 +5,7 @@ import type {
   Case,
   ChainVerification,
   Contact,
+  DataSource,
   EvidenceFile,
   FaceDetection,
   Graph,
@@ -19,7 +20,7 @@ import type {
 } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const TOKEN_KEY = "forensai_token";
+const TOKEN_KEY = "netsherlock_token";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -111,6 +112,15 @@ export const api = {
     return request<Case>("/cases/upload", { method: "POST", body: form });
   },
   ingestCase: (id: number) => request<IngestSummary>(`/cases/${id}/ingest`, { method: "POST" }),
+
+  listDataSources: (caseId: number) => request<DataSource[]>(`/cases/${caseId}/data-sources`),
+  addDataSource: (caseId: number, files: File[]) => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    return request<DataSource>(`/cases/${caseId}/data-sources`, { method: "POST", body: form });
+  },
+  ingestDataSource: (caseId: number, dataSourceId: number) =>
+    request<IngestSummary>(`/cases/${caseId}/data-sources/${dataSourceId}/ingest`, { method: "POST" }),
 
   listEvidence: (caseId: number, nsfwFlagged?: boolean) =>
     request<EvidenceFile[]>(

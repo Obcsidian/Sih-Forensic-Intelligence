@@ -35,8 +35,13 @@ export default function NewCaseDialog({
       return Array.from(byName.values());
     });
     if (!name) {
-      const first = picked.find((f) => /\.(e01|s01|l01|ex01|ufdr|ufd)$/i.test(f.name)) || picked[0];
-      setName(first.name.replace(/\.[^.]+$/, ""));
+      if (picked.every((f) => /\.eml$/i.test(f.name))) {
+        setName(`${picked.length} email${picked.length !== 1 ? "s" : ""}`);
+      } else {
+        const first =
+          picked.find((f) => /\.(e01|s01|l01|ex01|dd|img|raw|001|vmdk|vhd|vhdx|ufdr|ufd)$/i.test(f.name)) || picked[0];
+        setName(first.name.replace(/\.[^.]+$/, ""));
+      }
     }
   }
 
@@ -51,7 +56,7 @@ export default function NewCaseDialog({
     try {
       let created: Case;
       if (mode === "upload") {
-        if (files.length === 0) throw new ApiError(400, "Choose an .E01/.UFDR file (or all its segments) first");
+        if (files.length === 0) throw new ApiError(400, "Choose a disk image or .UFDR file (or all its segments) first");
         setBusyLabel(files.length > 1 ? `Uploading ${files.length} files...` : "Uploading...");
         created = await api.uploadCase({ name, description, files });
       } else {
@@ -152,7 +157,7 @@ export default function NewCaseDialog({
               mode === "upload" ? "bg-accent text-black" : "text-gray-400 hover:text-gray-200"
             }`}
           >
-            Upload E01 / UFDR file
+            Upload disk image / UFDR file
           </button>
           <button
             type="button"
@@ -183,7 +188,7 @@ export default function NewCaseDialog({
 
         {mode === "upload" ? (
           <>
-            <label className="mb-1 block text-xs text-gray-400">Forensic image or export file</label>
+            <label className="mb-1 block text-xs text-gray-400">Forensic image, export file, or .eml email(s)</label>
             <div
               onClick={() => fileInputRef.current?.click()}
               onDragOver={(e) => {
@@ -201,11 +206,13 @@ export default function NewCaseDialog({
               }`}
             >
               {files.length > 0 ? (
-                <div className="text-sm text-gray-300">Click or drop to add more segment files</div>
+                <div className="text-sm text-gray-300">Click or drop to add more files</div>
               ) : (
                 <>
                   <div className="text-sm text-gray-300">Click to browse, or drag file(s) here</div>
-                  <div className="mt-0.5 text-[11px] text-gray-500">.E01 / .S01 / .L01 / .EX01 / .UFDR</div>
+                  <div className="mt-0.5 text-[11px] text-gray-500">
+                    .E01 / .S01 / .L01 / .EX01 / .dd / .img / .raw / .001 / .vmdk / .vhd / .vhdx / .UFDR / .eml
+                  </div>
                 </>
               )}
             </div>
@@ -234,8 +241,9 @@ export default function NewCaseDialog({
             )}
 
             <div className="mb-3 text-[11px] text-gray-500">
-              For a multi-segment image (.E01, .E02, .E03, ...), select or drop every segment file together. The
-              files upload to the backend and are ingested automatically.
+              For a multi-segment image (.E01, .E02, .E03, ...), select or drop every segment file together. Or drop
+              one or more standalone .eml files directly — no disk image needed. Files upload to the backend and are
+              ingested automatically.
             </div>
           </>
         ) : (

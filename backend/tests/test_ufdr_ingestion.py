@@ -117,3 +117,35 @@ def test_ingest_ufdr_bad_zip(session, tmp_path):
 
     summary = CellebriteUFDRParser().ingest(session, case, path)
     assert any("not a valid UFDR/ZIP archive" in e for e in summary.errors)
+
+
+def test_ingest_ufdr_parses_email_model_type(session, tmp_path):
+    report_xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <reports>
+      <models>
+        <model type="Email" id="1">
+          <field name="From"><value>alice@example.com</value></field>
+          <field name="To"><value>bob@example.com</value></field>
+          <field name="Subject"><value>Quarterly report</value></field>
+          <field name="Body"><value>Numbers are attached.</value></field>
+          <field name="TimeStamp"><value>2026-02-01 12:00:00</value></field>
+        </model>
+      </models>
+    </reports>
+    """
+    path = tmp_path / "email.ufdr"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Reports/report.xml", report_xml)
+
+    case = Case(name="Email UFDR Test", source_path=str(path))
+    session.add(case)
+    session.commit()
+    session.refresh(case)
+
+    summary = CellebriteUFDRParser().ingest(session, case, path)
+    assert summary.messages == 1
+
+    messages = session.exec(select(Message).where(Message.case_id == case.id)).all()
+    assert messages[0].sender == "alice@example.com"
+    assert messages[0].recipient == "bob@example.com"
+    assert messages[0].body == "Subject: Quarterly report\n\nNumbers are attached."

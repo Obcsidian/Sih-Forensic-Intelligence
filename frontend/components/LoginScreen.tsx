@@ -37,7 +37,7 @@ export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (auth: AuthRes
         <div className="mb-6 flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded bg-accent/20 text-accent">◆</div>
           <div>
-            <div className="text-lg font-semibold text-white">ForensAI</div>
+            <div className="text-lg font-semibold text-white">NetSherlock</div>
             <div className="text-xs text-gray-500">AI-assisted forensic triage</div>
           </div>
         </div>

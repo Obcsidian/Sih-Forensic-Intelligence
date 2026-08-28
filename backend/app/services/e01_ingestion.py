@@ -12,10 +12,13 @@ contacts2.db, iOS AddressBook.sqlitedb, WhatsApp msgstore.db, etc.) into
 Contact/Call/Message rows -- each has its own schema per OS/app version and
 is out of scope here. Known artifact databases are still extracted (as
 EvidenceKind.document) with a note in IngestSummary.errors so nothing is
-silently dropped.
+silently dropped. .eml files are the one exception: RFC 822 is a single
+standard format parseable with the stdlib `email` module, so those get
+turned into Message rows the same way UFDR SMS/chat records do.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -25,10 +28,14 @@ from sqlmodel import Session
 from app.config import get_settings
 from app.models.case import Case
 from app.models.evidence_file import EvidenceFile, EvidenceKind
+from app.models.message import Message
 from app.models.timeline_event import TimelineEvent, TimelineEventType
 from app.services import audit_log
+from app.services.email_parsing import format_message_body, parse_eml
 from app.services.ingestion import (
     AUDIO_EXTENSIONS,
+    DOCUMENT_EXTENSIONS,
+    EMAIL_EXTENSIONS,
     PHOTO_EXTENSIONS,
     VIDEO_EXTENSIONS,
     IngestSummary,
@@ -37,9 +44,17 @@ from app.services.ingestion import (
     sha256_of_file,
 )
 
-logger = logging.getLogger("forensai.e01_ingestion")
+logger = logging.getLogger("netsherlock.e01_ingestion")
 
 E01_EXTENSIONS = {".e01", ".s01", ".l01", ".ex01"}
+
+# Raw/dd-style device images and VM disk containers -- pytsk3 opens these
+# directly via its own format auto-detection, no separate decode library
+# needed the way EWF needs pyewf. (.vmdk/.vhd/.vhdx only work if the
+# installed libtsk build was compiled with libvmdk/libvhdi support; if not,
+# opening raises and the resulting error is surfaced same as any other
+# unreadable image.)
+RAW_EXTENSIONS = {".dd", ".img", ".raw", ".001", ".vmdk", ".vhd", ".vhdx"}
 
 KNOWN_ARTIFACT_FILENAMES = {
     "contacts2.db": "Android contacts database",
@@ -52,6 +67,7 @@ KNOWN_ARTIFACT_FILENAMES = {
 
 MAX_EXTRACT_BYTES = 200 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
+PER_FILE_READ_TIMEOUT_SECONDS = 20
 
 _available: bool | None = None
 
@@ -76,6 +92,23 @@ def is_available() -> bool:
         else:
             _available = True
     return _available
+
+
+_raw_available: bool | None = None
+
+
+def raw_is_available() -> bool:
+    """True if pytsk3 is installed. Unlike E01, raw/dd images need no
+    separate decode library -- pytsk3 reads them directly."""
+    global _raw_available
+    if _raw_available is None:
+        try:
+            import pytsk3  # noqa: F401
+        except ImportError:
+            _raw_available = False
+        else:
+            _raw_available = True
+    return _raw_available
 
 
 def _open_ewf_image(source: Path):
@@ -103,6 +136,15 @@ def _open_ewf_image(source: Path):
             return self._handle.get_media_size()
 
     return _EWFImgInfo()
+
+
+def _open_raw_image(source: Path):
+    """Opens a raw/dd image (or a VM disk container, if libtsk was built
+    with vmdk/vhdi support) via pytsk3's own format detection -- no
+    separate decode bridge needed."""
+    import pytsk3
+
+    return pytsk3.Img_Info(str(source))
 
 
 def _open_volume(img):
@@ -168,6 +210,15 @@ class _Entry:
 
 
 def _classify(name: str) -> EvidenceKind | None:
+    """Every real file on the image is evidence, the same way Autopsy's own
+    file browser lists everything -- unlike CaseFolderParser/UFDR ingestion
+    (which only know about a fixed photos/audio export shape), an E01 image
+    is a full filesystem and most of what's on it won't be a photo or video.
+    NTFS/filesystem-internal metadata (`$MFT`, `$LogFile`, ...) is skipped:
+    it isn't user content and would just flood the evidence list with noise."""
+    if name.startswith("$"):
+        return None
+
     suffix = Path(name).suffix.lower()
     if suffix in PHOTO_EXTENSIONS:
         return EvidenceKind.photo
@@ -175,9 +226,9 @@ def _classify(name: str) -> EvidenceKind | None:
         return EvidenceKind.video
     if suffix in AUDIO_EXTENSIONS:
         return EvidenceKind.audio
-    if name.lower() in KNOWN_ARTIFACT_FILENAMES:
+    if suffix in DOCUMENT_EXTENSIONS or suffix in EMAIL_EXTENSIONS or name.lower() in KNOWN_ARTIFACT_FILENAMES:
         return EvidenceKind.document
-    return None
+    return EvidenceKind.other
 
 
 def _walk_filesystem(fs, summary: IngestSummary):
@@ -228,41 +279,78 @@ def _walk_filesystem(fs, summary: IngestSummary):
 
 
 def _read_content(tsk_file, size: int, path: str, summary: IngestSummary) -> bytes | None:
+    """Reads a file's full content off the image via TSK.
+
+    Run on a background thread with a hard wall-clock budget: on a real
+    multi-gigabyte disk image, a single damaged/heavily-fragmented file's
+    read_random() calls can block far longer than any individual chunk
+    timeout would catch, and pytsk3/pyewf give no way to cancel a call
+    that's already in flight. Without this, one bad file among tens of
+    thousands hangs the entire ingest indefinitely. The abandoned thread is
+    a daemon, so it can't block process shutdown; it's a deliberate leak,
+    not a real fix for whatever made that one read hang.
+    """
     if size <= 0:
         return b""
     if size > MAX_EXTRACT_BYTES:
         summary.errors.append(f"{path}: skipped, {size} bytes exceeds the {MAX_EXTRACT_BYTES} byte extraction cap")
         return None
-    chunks = []
-    offset = 0
-    try:
-        while offset < size:
-            data = tsk_file.read_random(offset, min(CHUNK_SIZE, size - offset))
-            if not data:
-                break
-            chunks.append(data)
-            offset += len(data)
-    except Exception as exc:
-        summary.errors.append(f"{path}: read failed ({exc})")
+
+    result: dict = {}
+
+    def _do_read():
+        try:
+            chunks = []
+            offset = 0
+            while offset < size:
+                data = tsk_file.read_random(offset, min(CHUNK_SIZE, size - offset))
+                if not data:
+                    break
+                chunks.append(data)
+                offset += len(data)
+            result["data"] = b"".join(chunks)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=_do_read, daemon=True)
+    thread.start()
+    thread.join(timeout=PER_FILE_READ_TIMEOUT_SECONDS)
+
+    if thread.is_alive():
+        summary.errors.append(
+            f"{path}: read timed out after {PER_FILE_READ_TIMEOUT_SECONDS}s and was skipped "
+            "(likely fragmented/damaged on this image)"
+        )
         return None
-    return b"".join(chunks)
+    if "error" in result:
+        summary.errors.append(f"{path}: read failed ({result['error']})")
+        return None
+    return result.get("data", b"")
 
 
-class E01Parser(UFDRParser):
-    def ingest(self, session: Session, case: Case, source: Path) -> IngestSummary:
+class _TskImageParser(UFDRParser):
+    """Shared pytsk3 filesystem-walk pipeline for image-backed parsers.
+
+    E01Parser and RawImageParser differ only in how the pytsk3 image handle
+    gets opened (EWF-decoded vs. raw bytes) -- everything downstream
+    (partition/filesystem probing, recursive file walk, extraction) is
+    identical, so it lives here once.
+    """
+
+    _backend_label = "image"
+
+    def _open_image(self, source: Path, summary: IngestSummary):
+        raise NotImplementedError
+
+    def ingest(self, session: Session, case: Case, source: Path, data_source_id: int | None = None) -> IngestSummary:
         import pytsk3
 
         summary = IngestSummary()
 
-        import pyewf
-
-        if not pyewf.check_file_signature(str(source)):
-            summary.errors.append(f"{source} does not look like an EWF/E01 file; attempting to open anyway")
-
         try:
-            img = _open_ewf_image(source)
+            img = self._open_image(source, summary)
         except Exception as exc:
-            summary.errors.append(f"failed to open image via libewf: {exc}")
+            summary.errors.append(f"failed to open image via {self._backend_label}: {exc}")
             return summary
 
         filesystems = []
@@ -288,7 +376,8 @@ class E01Parser(UFDRParser):
         if not filesystems:
             summary.errors.append(
                 "no readable filesystem found in image -- if this is a multi-segment E01 "
-                "(.E01/.E02/.E03/...), make sure every segment file is present alongside the first one"
+                "(.E01/.E02/.E03/...), make sure every segment file is present alongside the first one; "
+                "if this is a raw/dd image, confirm it wasn't truncated during acquisition/upload"
             )
             return summary
 
@@ -298,10 +387,12 @@ class E01Parser(UFDRParser):
         seen_names: set[str] = set()
         for fs in filesystems:
             for entry in _walk_filesystem(fs, summary):
-                self._ingest_file(session, case, entry, extract_dir, summary, seen_names)
+                self._ingest_file(session, case, entry, extract_dir, summary, seen_names, data_source_id)
 
-        case_status_note = f"filesystems_found={len(filesystems)}"
-        logger.info("E01 ingest for case %s: %s", case.id, case_status_note)
+        logger.info(
+            "%s ingest for case %s: filesystems_found=%d",
+            type(self).__name__, case.id, len(filesystems),
+        )
 
         audit_log.append_entry(
             session,
@@ -312,7 +403,7 @@ class E01Parser(UFDRParser):
         )
         return summary
 
-    def _ingest_file(self, session, case, entry: _Entry, extract_dir: Path, summary: IngestSummary, seen_names: set[str]):
+    def _ingest_file(self, session, case, entry: _Entry, extract_dir: Path, summary: IngestSummary, seen_names: set[str], data_source_id: int | None = None):
         name = entry.path.rsplit("/", 1)[-1]
         kind = _classify(name)
         if kind is None:
@@ -346,6 +437,7 @@ class E01Parser(UFDRParser):
 
         evidence = EvidenceFile(
             case_id=case.id,
+            data_source_id=data_source_id,
             kind=kind,
             original_path=str(dest),
             file_name=name,
@@ -364,6 +456,9 @@ class E01Parser(UFDRParser):
                 f"{entry.path}: {KNOWN_ARTIFACT_FILENAMES[name.lower()]} found — contains contacts/messages, "
                 f"automatic parsing not implemented, extracted to {dest} for manual review"
             )
+
+        if Path(name).suffix.lower() in EMAIL_EXTENSIONS:
+            self._ingest_email(session, case, entry.path, content, evidence, summary)
 
         event_type = {
             EvidenceKind.photo: TimelineEventType.photo,
@@ -401,9 +496,68 @@ class E01Parser(UFDRParser):
         )
         session.commit()
 
+    def _ingest_email(self, session, case, path: str, content: bytes, evidence: EvidenceFile, summary: IngestSummary):
+        """Parses a .eml found on the image into a Message row, same as
+        UFDR SMS/chat records -- keeps the raw file as its own EvidenceFile
+        (already created by the caller) regardless of whether parsing
+        succeeds, since a malformed .eml is still real evidence."""
+        parsed = parse_eml(content)
+        if parsed is None or parsed.sent_at is None:
+            summary.errors.append(
+                f"{path}: could not parse email headers (missing/unparseable From or Date); kept as a document only"
+            )
+            return
+
+        recipient = ", ".join(parsed.recipients) if parsed.recipients else "unknown"
+        msg = Message(
+            case_id=case.id,
+            sender=parsed.sender,
+            recipient=recipient,
+            body=format_message_body(parsed),
+            timestamp=parsed.sent_at,
+            app="email",
+        )
+        session.add(msg)
+        session.flush()
+        preview = (msg.body[:60] + "...") if len(msg.body) > 60 else msg.body
+        session.add(
+            TimelineEvent(
+                case_id=case.id,
+                event_type=TimelineEventType.message,
+                timestamp=parsed.sent_at,
+                summary=f"{msg.sender} -> {recipient}: {preview} [from image]",
+                source_table="message",
+                source_id=msg.id,
+            )
+        )
+        summary.messages += 1
+
+
+class E01Parser(_TskImageParser):
+    _backend_label = "libewf"
+
+    def _open_image(self, source: Path, summary: IngestSummary):
+        import pyewf
+
+        if not pyewf.check_file_signature(str(source)):
+            summary.errors.append(f"{source} does not look like an EWF/E01 file; attempting to open anyway")
+        return _open_ewf_image(source)
+
+
+class RawImageParser(_TskImageParser):
+    """Handles raw/dd-style device images and VM disk containers
+    (.dd/.img/.raw/.001/.vmdk/.vhd/.vhdx) -- opened directly via pytsk3
+    with no separate decode library."""
+
+    _backend_label = "pytsk3 (raw image)"
+
+    def _open_image(self, source: Path, summary: IngestSummary):
+        return _open_raw_image(source)
+
 
 def resolve_parser(source: Path) -> UFDRParser:
-    """Pick the right ingestion backend for a case-export folder, .E01 image, or .UFDR archive."""
+    """Pick the right ingestion backend for a case-export folder, .E01/raw
+    disk image, or .UFDR archive."""
     from app.services.ingestion import CaseFolderParser
     from app.services.ufdr_ingestion import UFDR_EXTENSIONS, CellebriteUFDRParser
 
@@ -418,10 +572,18 @@ def resolve_parser(source: Path) -> UFDRParser:
             )
         return E01Parser()
 
+    if source.is_file() and source.suffix.lower() in RAW_EXTENSIONS:
+        if not raw_is_available():
+            raise ValueError(
+                f"'{source}' looks like a raw/dd disk image, but image support isn't installed "
+                "(pip install pytsk3)"
+            )
+        return RawImageParser()
+
     if source.is_file() and source.suffix.lower() in UFDR_EXTENSIONS:
         return CellebriteUFDRParser()
 
-    all_extensions = sorted(E01_EXTENSIONS | UFDR_EXTENSIONS)
+    all_extensions = sorted(E01_EXTENSIONS | RAW_EXTENSIONS | UFDR_EXTENSIONS)
     raise ValueError(
         f"source_path '{source}' is neither a readable case-export folder nor a "
         f"recognized forensic export file ({', '.join(all_extensions)})"
